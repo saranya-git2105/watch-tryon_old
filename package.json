@@ -9,15 +9,22 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.34",
+    "@zappar/zappar-threejs": "^4.3.0",
+    "deepar": "^5.6.21",
     "next": "16.2.1",
+    "peerjs": "^1.5.5",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "three": "^0.183.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.183.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
