@@ -627,28 +627,34 @@ export default function WatchTryOn() {
                   <p className="text-[10px] text-white/90 font-medium">Having trouble? Try Manual <span className="underline ml-1">Turn Auto OFF</span></p>
               </div>
 
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden">
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden z-40">
+                  {/* Hand Outline PNG Overlay */}
+                  <img 
+                    src="/hand_outline.png?v=2" 
+                    alt="Hand Outline Guide"
+                    className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-all duration-700 ${
+                      wristSide === 'RIGHT' ? '-scale-x-100' : ''
+                    }`}
+                  />
+
                   <svg 
-                    viewBox="0 0 300 450" 
-                    className={`absolute inset-0 w-full h-full object-cover transition-all duration-700 ${wristSide === 'RIGHT' ? '-scale-x-100' : ''}`}
+                    viewBox="0 0 1024 1024" 
+                    className={`absolute inset-0 w-full h-full object-contain transition-all duration-700 ${wristSide === 'RIGHT' ? '-scale-x-100' : ''}`}
                     fill="none" 
                     stroke="rgba(255,255,255,0.7)" 
-                    strokeWidth="1.5" 
+                    strokeWidth="4" 
                     strokeLinecap="round" 
                     strokeLinejoin="round"
-                    preserveAspectRatio="xMidYMid slice"
+                    preserveAspectRatio="xMidYMid meet"
                   >
-                      {/* Tangiblee-style horizontal hand/arm outline reconstruction */}
-                      <path d="M -50,215 L 120,190 C 140,185 150,165 165,160 C 185,155 205,160 195,180 C 215,180 235,185 230,205 C 225,225 205,230 220,250 C 235,270 215,285 195,280 C 175,275 165,290 155,305 C 145,320 125,315 115,300 L -50,335" />
-                      
                       {/* Watch Placement Zone */}
                       <ellipse 
-                        cx="105" cy="255" 
-                        rx="12" ry="25" 
-                        transform="rotate(-10 105 255)" 
-                        strokeDasharray="3 3" 
-                        stroke={steadyProgress > 0 ? "#10b981" : "rgba(255,255,255,0.4)"} 
-                        strokeWidth="1" 
+                        cx="402" cy="511" 
+                        rx="40" ry="75" 
+                        transform="rotate(-10 402 511)" 
+                        strokeDasharray="10 10" 
+                        stroke={steadyProgress > 0 ? "#10b981" : "rgba(255,255,255,0.6)"} 
+                        strokeWidth="3" 
                       />
                   </svg>
               </div>

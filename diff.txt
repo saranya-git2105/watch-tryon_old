@@ -1,0 +1,380 @@
+﻿diff --git a/src/components/WatchTryOn.tsx b/src/components/WatchTryOn.tsx
+index 4bf84f7..3c339f2 100644
+--- a/src/components/WatchTryOn.tsx
++++ b/src/components/WatchTryOn.tsx
+@@ -100,10 +100,10 @@ export default function WatchTryOn() {
+   };
+ 
+   const initThreeForImage = async (imgUrl: string, modelPath: string, side: "LEFT" | "RIGHT") => {
+-    if (!threeCanvasRef.current || !imgUrl) return;
++    if (!threeCanvasRef.current || !imgUrl || !selectedWatch) return;
+ 
+     try {
+-      setStatus("Analysing Pro Context...");
++      setStatus("Analyzing Pro Context...");
+       const img = new Image();
+       img.src = imgUrl;
+       await img.decode();
+@@ -115,89 +115,56 @@ export default function WatchTryOn() {
+ 
+       const threeSetup = createThreeScene(threeCanvasRef.current, width, height);
+       
+-      // Use the already decoded image for the background
++      // Setup High-Res Background Plate
+       const texture = new THREE.Texture(img);
+       texture.colorSpace = THREE.SRGBColorSpace;
+       texture.needsUpdate = true;
+       threeSetup.scene.background = texture;
+ 
+-      // Use a robust native Image loader instead of TextureLoader.loadAsync
+-      // This prevents NextJS interception bugs that cause ThreeJS to throw raw [object Event] errors.
+-      const watchImg = new Image();
+-      watchImg.src = selectedWatch?.image || "";
+-      await watchImg.decode();
+-      const watchTex = new THREE.Texture(watchImg);
+-      watchTex.colorSpace = THREE.SRGBColorSpace;
+-      watchTex.needsUpdate = true;
++      // --- 1. LOAD TRUE 3D BOUTIQUE MODEL ---
++      setStatus("Entering Boutique...");
++      const watchModel = await loadWatchModel(selectedWatch.model);
++      
++      // Normalize & Automatic Centering
++      const box = new THREE.Box3().setFromObject(watchModel);
++      const size = new THREE.Vector3();
++      box.getSize(size);
++      const center = new THREE.Vector3();
++      box.getCenter(center);
++      
++      // Secondary scaling wrapper to handle orientation and pivot logic
++      const modelWrapper = new THREE.Group();
++      watchModel.position.sub(center); 
++      modelWrapper.add(watchModel);
+       
+-      const watchGeom = new THREE.PlaneGeometry(1.0, 1.0); // Catalog images are square
+-      const watchMat = new THREE.ShaderMaterial({
+-          uniforms: {
+-              tDiffuse: { value: watchTex }
+-          },
+-          vertexShader: `
+-              varying vec2 vUv;
+-              void main() {
+-                  vUv = uv;
+-                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+-              }
+-          `,
+-          fragmentShader: `
+-              uniform sampler2D tDiffuse;
+-              varying vec2 vUv;
+-              void main() {
+-                  vec4 texColor = texture2D(tDiffuse, vUv);
+-                  // The JPG background is off-white (not pure #FFF) and textures are evaluated in Linear color space internally
+-                  // CHROMA-KEY: DISCARD STUDIO WHITE BACKGROUNDS (JPG compression artifacts usually stay above 0.9)
+-                  float maxVal = max(texColor.r, max(texColor.g, texColor.b));
+-                  if (maxVal > 0.93) {
+-                      discard;
+-                  }
+-
+-                  gl_FragColor = texColor;
+-              }
+-          `,
+-          transparent: true,
+-          side: THREE.DoubleSide,
+-          depthWrite: true,
+-          depthTest: true // Re-enable depth testing because the position math is finally corrected!
+-      });
+-      const watchModel = new THREE.Mesh(watchGeom, watchMat);
+-
+       const watchGroup = new THREE.Group();
++      watchGroup.add(modelWrapper);
+       threeSetup.scene.add(watchGroup);
+-      
+-      // Initialize flat. Rotation is applied dynamically based on detection status.
+-      watchModel.rotation.set(0, 0, 0);
+-      watchGroup.add(watchModel);
+ 
+-      const occluderGeom = new THREE.CylinderGeometry(1, 1, 3, 16);
+-      const occluderMat = new THREE.MeshBasicMaterial({ colorWrite: false });
++      // --- 2. VOLUMETRIC WRIST OCCLUDER ---
++      // Fixes "Transparent Lines" by rendering depth mask BEFORE the watch
++      const occluderGeom = new THREE.CylinderGeometry(0.5, 0.5, 4, 32);
++      const occluderMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
+       const wristProxyMesh = new THREE.Mesh(occluderGeom, occluderMat);
+       wristProxyMesh.rotation.x = Math.PI / 2;
++      wristProxyMesh.renderOrder = -1; // CRITICAL: Populate Z-buffer first
+       threeSetup.scene.add(wristProxyMesh);
+ 
+-      // --- PRO STUDIO LIGHTING & SHADOWS ---
++      // --- 3. STUDIO LIGHTING & GROUNDING ---
+       threeSetup.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+       
+-      const keyLight = new THREE.DirectionalLight(0xffffff, 4.5);
+-      keyLight.position.set(3, 8, 10);
++      const keyLight = new THREE.DirectionalLight(0xffffff, 3.5);
++      keyLight.position.set(5, 8, 10);
+       threeSetup.scene.add(keyLight);
+-      
+-      const rimLight = new THREE.DirectionalLight(0xffffff, 2.5);
+-      rimLight.position.set(-6, 2, -2);
+-      threeSetup.scene.add(rimLight);
+ 
+-      // Create high-res contact shadow texture
+       const shadowSize = 256;
+       const shCanvas = document.createElement('canvas');
+-      shCanvas.width = shadowSize;
+-      shCanvas.height = shadowSize;
++      shCanvas.width = shadowSize; shCanvas.height = shadowSize;
+       const shCtx = shCanvas.getContext('2d');
+       if (shCtx) {
+           const grad = shCtx.createRadialGradient(shadowSize/2, shadowSize/2, 0, shadowSize/2, shadowSize/2, shadowSize/2);
+-          grad.addColorStop(0, 'rgba(0,0,0,0.52)');
+-          grad.addColorStop(0.35, 'rgba(0,0,0,0.22)');
++          grad.addColorStop(0, 'rgba(0,0,0,0.55)');
++          grad.addColorStop(0.35, 'rgba(0,0,0,0.2)');
+           grad.addColorStop(1, 'rgba(0,0,0,0)');
+           shCtx.fillStyle = grad;
+           shCtx.fillRect(0, 0, shadowSize, shadowSize);
+@@ -205,103 +172,74 @@ export default function WatchTryOn() {
+       const shadowTex = new THREE.CanvasTexture(shCanvas);
+       const shadowMesh = new THREE.Mesh(
+           new THREE.PlaneGeometry(1.6, 1.6),
+-          new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false })
++          new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.7 })
+       );
+-      // Position shadow significantly behind the watch face
+-      shadowMesh.position.z = -0.01;
++      shadowMesh.position.z = -0.05; // Sit just behind the watch on the skin surface
+       watchGroup.add(shadowMesh);
+-      // --------------------------------------
+ 
++      // --- 4. ANATOMICAL POSITIONING ---
+       const landmarker = await getHandLandmarker("IMAGE");
+       const result = await landmarker.detect(img);
+ 
+-      let pose: any = null;
+-      let initialWristY = 0;
+-      let initialAIPos = new THREE.Vector2(0, 0);
+-      let currentWristWidth = 0;
+-      let initialTy = 0;
+-
+-      const showFallback = (msg: string) => {
+-          setStatus(msg);
+-          watchGroup.position.set(0, 0, 0); 
+-          watchGroup.scale.setScalar(2.5); 
+-          watchModel.rotation.set(0, 0, 0); 
+-          wristProxyMesh.position.set(0, 0, -10); 
+-          initialWristY = 0; 
+-          initialAIPos.set(0, 0);
+-          currentWristWidth = 0.5; 
+-          initialTy = 0;
+-      };
++      const initialAIPos = new THREE.Vector2(0, 0);
+ 
+       if (result?.landmarks?.length) {
+-        pose = calculateWristPose(result.landmarks[0]);
++        const pose = calculateWristPose(result.landmarks[0]);
+         if (pose) {
+           const visibleHeight = 2 * Math.tan((threeSetup.camera.fov * Math.PI) / 360) * 5;
+           const visibleWidth = visibleHeight * threeSetup.camera.aspect;
+           
+-          initialWristY = -(pose.wrist.y - 0.5) * visibleHeight;
+-          
+-          const indexTx = (pose.indexBase.x - 0.5) * visibleWidth;
+-          const indexTy = -(pose.indexBase.y - 0.5) * visibleHeight;
+-          const pinkyTx = (pose.pinkyBase.x - 0.5) * visibleWidth;
+-          const pinkyTy = -(pose.pinkyBase.y - 0.5) * visibleHeight;
+-          const palmTx = (pose.palmMid.x - 0.5) * visibleWidth;
+-          const palmTy = -(pose.palmMid.y - 0.5) * visibleHeight;
+-          const wristTx = (pose.wrist.x - 0.5) * visibleWidth;
+-          const wristTy = -(pose.wrist.y - 0.5) * visibleHeight;
+-
+-          currentWristWidth = Math.hypot(indexTx - pinkyTx, indexTy - pinkyTy);
+-          const physicalWristWidth = currentWristWidth;
+           const tx = (pose.watchCenter.x - 0.5) * visibleWidth;
+           const ty = -(pose.watchCenter.y - 0.5) * visibleHeight;
+-          initialTy = ty;
+           const lz = (pose.watchCenter.z || 0) * -1.2;
+ 
+-          let yAxis = new THREE.Vector3(palmTx - wristTx, palmTy - wristTy, 0).normalize();
+-          let xAxis = new THREE.Vector3(-yAxis.y, yAxis.x, 0).normalize();
+-          
+-          let naturalWristAxis = new THREE.Vector3(pinkyTx - indexTx, pinkyTy - indexTy, 0).normalize();
+-          if (xAxis.dot(naturalWristAxis) < 0) xAxis.negate();
++          // Stable Pose Basis from Landmarks
++          const wristTx = (pose.wrist.x - 0.5) * visibleWidth;
++          const wristTy = -(pose.wrist.y - 0.5) * visibleHeight;
++          const palmTx = (pose.palmMid.x - 0.5) * visibleWidth;
++          const palmTy = -(pose.palmMid.y - 0.5) * visibleHeight;
+ 
+-          let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+-          if (zAxis.z < 0) { zAxis.negate(); xAxis.negate(); }
++          const yAxis = new THREE.Vector3(palmTx - wristTx, palmTy - wristTy, 0).normalize();
++          const xAxis = new THREE.Vector3(-yAxis.y, yAxis.x, 0).normalize();
++          const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+ 
+           const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+           const targetQuat = new THREE.Quaternion().setFromRotationMatrix(basis);
+-          targetQuat.multiply(new THREE.Quaternion().setFromAxisAngle(xAxis, -0.25));
+-
+-          // INDIVIDUAL WATCH CALIBRATION:
+-          const watchRatio = selectedWatch?.contentWidth || 0.28;
+-          const watchVOff = (selectedWatch as any)?.vOffset || 0;
+-          const watchTilt = (selectedWatch as any)?.tilt || 0;
+           
+-          const targetWatchScalar = (physicalWristWidth * 0.52) / watchRatio;
+-
+-          // Crown Flip Logic (hand-wards) + Individual Watch Tilt correction
+-          const zRotation = (side === "RIGHT" ? -Math.PI / 2 : Math.PI / 2) + watchTilt;
+-          watchModel.rotation.set(0, 0, zRotation);
+-          watchGroup.scale.x = (side === "RIGHT") ? -1 : 1;
+-
+-          // POSITIONING: Moving the watch "down" the arm (lower Y-offset)
+-          // POSITIONING (User-Refined): Moving significantly towards bottom-left (down-arm)
+-          const finalPos = new THREE.Vector3(tx - 0.15, ty - 0.15, lz + 0.02); 
+-          initialAIPos.set(tx - 0.15, ty - 0.15); // Store the "Perfect" starting point
+-          watchGroup.position.copy(finalPos);
++          // Align Blender Orientation to Three.js World
++          const modelCorrection = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2, 0, -Math.PI/2));
++          targetQuat.multiply(modelCorrection);
++
++          const physicalWristWidth = pose.wristWidth * visibleWidth;
++          const modelWidth = Math.max(size.x, size.z); 
++          const targetWatchScalar = (physicalWristWidth * 0.95) / modelWidth;
++
++          watchGroup.position.set(tx, ty, lz + 0.05);
+           watchGroup.quaternion.copy(targetQuat);
++          
++          // Crown Flip Logic (ensure crown faces away from elbow)
++          if (side === "RIGHT") {
++             modelWrapper.scale.x = -1;
++             modelWrapper.rotation.y = Math.PI;
++          }
++          
+           watchGroup.scale.setScalar(targetWatchScalar); 
++          initialAIPos.set(tx, ty);
+ 
+-          // EXCLUSIVE FIX: Disabling 3D occlusion for 2D plane mode to eliminate "transparent lines"
+-          wristProxyMesh.position.set(0, 0, -20); 
+-          
+-          setStatus("5cm Boutique Guard Active.");
+-        } else {
+-          showFallback("AI Pose Ambiguity. Tweak Position Manually.");
++          wristProxyMesh.position.set(tx, ty, lz);
++          wristProxyMesh.quaternion.copy(targetQuat);
++          wristProxyMesh.rotateZ(Math.PI/2);
++          wristProxyMesh.scale.set(targetWatchScalar * 0.6, 2, targetWatchScalar * 0.45);
++          wristProxyMesh.visible = false; // DEBUG: disable occluder to see if it's hiding the watch
++
++          setStatus(`Fit! W:${modelWidth.toFixed(2)} S:${targetWatchScalar.toFixed(4)} Sz:${size.x.toFixed(2)},${size.y.toFixed(2)},${size.z.toFixed(2)}`);
+         }
+       } else {
+-        showFallback("AI Missed Hand. Drag watch to your wrist!");
++        setStatus("Hand Obscured. Manual Alignment Enabled.");
++        watchGroup.scale.setScalar(2.5);
+       }
+ 
+-      // --- ADD INTERACTIVE EDITING (Drag & Scale) ---
++      // --- 5. INTERACTIVE FINE-TUNING ---
+       if (threeCanvasRef.current) {
+           const canvasEl = threeCanvasRef.current;
+           canvasEl.style.touchAction = 'none'; 
+@@ -317,43 +255,27 @@ export default function WatchTryOn() {
+               canvasEl.setPointerCapture(e.pointerId);
+           });
+ 
+-          canvasEl.oncontextmenu = (e) => e.preventDefault();
+-
+           canvasEl.addEventListener('pointermove', (e) => {
+               if (!isDragging) return;
+               
+               const deltaX = e.clientX - prevPointer.x;
+               const deltaY = e.clientY - prevPointer.y;
+ 
+-              if (e.buttons === 2 || e.shiftKey) {
+-                  watchModel.rotation.z -= deltaX * 0.01;
+-              } else {
+-                  const visibleHeight = 2 * Math.tan((threeSetup.camera.fov * Math.PI) / 360) * 5;
+-                  const visibleWidth = visibleHeight * threeSetup.camera.aspect;
+-                  const rect = canvasEl.getBoundingClientRect();
++              const visibleHeight = 2 * Math.tan((threeSetup.camera.fov * Math.PI) / 360) * 5;
++              const visibleWidth = visibleHeight * threeSetup.camera.aspect;
++              const rect = canvasEl.getBoundingClientRect();
+                   
+-                  const moveX = (deltaX / rect.width) * visibleWidth;
+-                  const moveY = -(deltaY / rect.height) * visibleHeight;
++              const moveX = (deltaX / rect.width) * visibleWidth;
++              const moveY = -(deltaY / rect.height) * visibleHeight;
+ 
+-                  // CALIBRATION OVERRIDE: Hold Alt to position new watches in the future
+-                  if (e.altKey) {
+-                      watchGroup.position.x += moveX;
+-                      watchGroup.position.y += moveY;
+-                      
+-                      const newVOff = (watchGroup.position.y - (initialTy - 0.015));
+-                      const finalWidthRatio = (currentWristWidth * 0.52) / watchGroup.scale.x;
+-                      console.log(`%c CALIBRATION: vOffset: ${newVOff.toFixed(4)}, widthRatio: ${finalWidthRatio.toFixed(4)}`, "background: #22c55e; color: white; padding: 4px;");
+-                  } else {
+-                      const targetTx = watchGroup.position.x + moveX;
+-                      const targetTy = watchGroup.position.y + moveY;
+-                      const withinX = Math.abs(targetTx - initialAIPos.x) < 0.08;
+-                      const withinY = Math.abs(targetTy - initialAIPos.y) < 0.08;
+-                      
+-                      if (withinX && withinY) { 
+-                          watchGroup.position.x += moveX;
+-                          watchGroup.position.y += moveY;
+-                      }
+-                  }
++              if (e.buttons === 2 || e.shiftKey) {
++                  watchGroup.rotateX(moveY * 0.5);
++                  watchGroup.rotateY(moveX * 0.5);
++              } else {
++                  watchGroup.position.x += moveX;
++                  watchGroup.position.y += moveY;
++                  wristProxyMesh.position.x += moveX;
++                  wristProxyMesh.position.y += moveY;
+               }
+ 
+               threeSetup.renderer.render(threeSetup.scene, threeSetup.camera);
+@@ -367,24 +289,14 @@ export default function WatchTryOn() {
+           };
+ 
+           canvasEl.addEventListener('pointerup', stopDrag);
+-          canvasEl.addEventListener('pointercancel', stopDrag);
+-
+           canvasEl.addEventListener('wheel', (e) => {
+-              if (e.altKey) {
+-                  e.preventDefault();
+-                  const scaleDelta = e.deltaY * -0.001; 
+-                  watchGroup.scale.setScalar(watchGroup.scale.x * (1 + scaleDelta));
+-                  
+-                  const finalWidthRatio = (currentWristWidth * 0.52) / watchGroup.scale.x;
+-                  console.log(`%c ZOOM CALIBRATION: contentWidth: ${finalWidthRatio.toFixed(4)}`, "background: #3b82f6; color: white; padding: 4px;");
+-                  
+-                  threeSetup.renderer.render(threeSetup.scene, threeSetup.camera);
+-              }
++              e.preventDefault();
++              const scaleDelta = 1 - (e.deltaY * 0.001);
++              watchGroup.scale.multiplyScalar(scaleDelta);
++              threeSetup.renderer.render(threeSetup.scene, threeSetup.camera);
+           }, { passive: false });
+       }
+-      // ----------------------------------------------
+ 
+-      // Continuous render loop for high-res texture updates
+       const render = () => {
+           if (activeMode !== "SYNCED") return;
+           threeSetup.renderer.render(threeSetup.scene, threeSetup.camera);
+@@ -392,11 +304,12 @@ export default function WatchTryOn() {
+       };
+       render();
+     } catch (e) {
+-      console.error(e);
+-      setStatus("Anatomy Logic Error.");
++      console.error("3D RENDER FAIL:", e);
++      setStatus("V-Horology Engine Error.");
+     }
+   };
+ 
++
+   useEffect(() => {
+     if (activeMode === "SYNCED" && capturedImage && selectedWatch) {
+       initThreeForImage(capturedImage, selectedWatch.model, wristSide);
