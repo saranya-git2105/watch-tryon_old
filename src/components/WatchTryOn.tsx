@@ -35,6 +35,47 @@ export default function WatchTryOn() {
 
   const peerRef = useRef<Peer | null>(null);
 
+  const [isSdk, setIsSdk] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  // SDK Dynamic Parameter Bootstrap
+  useEffect(() => {
+    setMounted(true);
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sdk = params.get("sdk");
+    const watchId = params.get("watchId");
+    const watchImage = params.get("watchImage");
+    const watchName = params.get("watchName");
+    const watchBrand = params.get("watchBrand");
+
+    if (sdk === "true" && watchId && watchImage) {
+      console.log(`[WatchTryOn] SDK parameter detected. Bootstrapping dynamic watch session... ID: ${watchId}, Image: ${watchImage}`);
+      setIsSdk(true);
+      
+      const dynamicWatch = {
+        id: watchId,
+        name: watchName || "Fossil Piece",
+        brand: watchBrand || "FOSSIL",
+        image: decodeURIComponent(watchImage), // Decode incoming e-commerce watch image URL
+        price: params.get("watchPrice") || "", // Map dyn e-commerce price
+        model: "/models/watch.glb", // Base three.js watch band model
+        contentWidth: 0.28,
+        vOffset: 0,
+        tilt: 0
+      };
+
+      setSelectedWatch(dynamicWatch);
+      
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        setActiveMode("MOBILE_CAPTURE");
+      } else {
+        setActiveMode("QR");
+      }
+    }
+  }, []);
+
   // GLOBAL PEER CONNECTION & HTTP SYNC POLLING
   useEffect(() => {
     let peer: Peer | null = null;
@@ -105,6 +146,7 @@ export default function WatchTryOn() {
     try {
       setStatus("Analysing Pro Context...");
       const img = new Image();
+      img.crossOrigin = "anonymous"; // Enable cross-origin context reading
       img.src = imgUrl;
       await img.decode();
       
@@ -114,16 +156,13 @@ export default function WatchTryOn() {
       threeCanvasRef.current.height = height;
 
       const threeSetup = createThreeScene(threeCanvasRef.current, width, height);
-      
-      // Use the already decoded image for the background
-      const texture = new THREE.Texture(img);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.needsUpdate = true;
-      threeSetup.scene.background = texture;
+      // scene.background is intentionally left null — the captured hand photo
+      // is rendered as an <img> tag behind the transparent Three.js canvas overlay.
 
       // Use a robust native Image loader instead of TextureLoader.loadAsync
       // This prevents NextJS interception bugs that cause ThreeJS to throw raw [object Event] errors.
       const watchImg = new Image();
+      watchImg.crossOrigin = "anonymous"; // Enable cross-origin for external Fossil images
       watchImg.src = selectedWatch?.image || "";
       await watchImg.decode();
       const watchTex = new THREE.Texture(watchImg);
@@ -529,20 +568,28 @@ export default function WatchTryOn() {
   }, [activeMode]);
 
 
+  if (!mounted) {
+    return <div className="w-full min-h-screen bg-[#f3f3f3]" />;
+  }
+
   return (
-    <div className="flex min-h-screen flex-col items-center bg-zinc-950 text-white selection:bg-white/10 overflow-x-hidden">
+    <div className={`flex min-h-screen flex-col items-center selection:bg-white/10 overflow-x-hidden transition-colors duration-500 ${
+      isSdk ? 'bg-[#f3f3f3] text-zinc-800' : 'bg-zinc-950 text-white'
+    }`}>
       
       {/* LUXURY NAVIGATION */}
-      <nav className="w-full h-24 flex items-center justify-between px-16 border-b border-white/5 opacity-80 backdrop-blur-3xl sticky top-0 z-50">
-          <div className="text-xl font-extrabold italic uppercase tracking-tighter">Nexus Pro</div>
-          <div className="flex gap-12 text-[10px] uppercase font-bold tracking-[0.4em]">
-              <span className="cursor-pointer hover:text-emerald-500 transition-colors">Boutique</span>
-              <span className="opacity-30 cursor-not-allowed">Collections</span>
-          </div>
-          <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center">
-              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-          </div>
-      </nav>
+      {!isSdk && (
+        <nav className="w-full h-24 flex items-center justify-between px-16 border-b border-white/5 opacity-80 backdrop-blur-3xl sticky top-0 z-50">
+            <div className="text-xl font-extrabold italic uppercase tracking-tighter">Nexus Pro</div>
+            <div className="flex gap-12 text-[10px] uppercase font-bold tracking-[0.4em]">
+                <span className="cursor-pointer hover:text-emerald-500 transition-colors">Boutique</span>
+                <span className="opacity-30 cursor-not-allowed">Collections</span>
+            </div>
+            <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center">
+                <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+            </div>
+        </nav>
+      )}
 
       {/* CATALOG VIEW */}
       {activeMode === "CATALOG" && (
@@ -580,7 +627,57 @@ export default function WatchTryOn() {
 
       {/* SYNC MODAL VIEW */}
       {activeMode === "QR" && (
-        <div className="flex flex-col items-center justify-center py-24">
+        isSdk ? (
+          <div className="w-full h-screen bg-[#f3f3f3] text-zinc-800 flex flex-col justify-between items-center font-sans overflow-hidden">
+            {/* Header section matching US storefront */}
+            <div className="w-full px-12 pt-8 pb-2 flex items-center justify-between">
+              {/* Close Button spacer to match screenshot close button alignment */}
+              <div className="w-8 h-8" />
+            </div>
+
+            {/* Main QR Card Container */}
+            <div className="flex-grow flex flex-col items-center justify-center px-6 py-2 w-full max-w-md">
+              <div className="w-full bg-[#f3f3f3] flex flex-col items-center gap-6">
+                {/* QR Code Graphic Frame */}
+                <div className="p-5 bg-white rounded-[2rem] shadow-sm border border-zinc-100/50 flex flex-col items-center justify-center">
+                  <QRCodeSVG value={mobileUrl} size={180} level="H" />
+                </div>
+
+                {/* Hand scanning QR outline */}
+                <div className="flex flex-col items-center gap-3 text-center">
+                  <svg viewBox="0 0 64 64" width="44" height="44" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-700">
+                    <rect x="22" y="6" width="20" height="34" rx="3" />
+                    <circle cx="32" cy="35" r="1" />
+                    <line x1="30" y1="9" x2="34" y2="9" />
+                    <path d="M18 42c4-3 6-8 6-8s-1.5-1.5-3-1.5c-2.5 0-5 1.5-5 4s2.5 4 5 4c1.5 0 5-1.5 5-1.5" />
+                    <path d="M26 15h12M26 20h12M26 25h12" strokeDasharray="2 2" />
+                  </svg>
+                  <p className="text-[11px] font-medium tracking-wide text-zinc-800 font-sans">Scan QR with your phone camera to Try On</p>
+                </div>
+
+
+              </div>
+            </div>
+
+            {/* Bottom Product Footer Bar */}
+            <div className="w-full bg-white border-t border-zinc-200/80 py-5 px-10 flex items-center justify-between mt-auto">
+              <div className="flex flex-col text-left">
+                <span className="text-[11px] font-extrabold text-zinc-900 tracking-tight font-sans truncate max-w-[200px] md:max-w-xs">{selectedWatch?.name || "Raquel Watch"}</span>
+                <span className="text-[13px] font-black text-zinc-800 mt-1 font-sans">{(selectedWatch as any)?.price || "₹12,495.00"}</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  alert("Watch Added to Cart!");
+                }}
+                className="px-7 py-3.5 bg-[#002d5c] hover:bg-[#001d3d] text-white text-[9px] font-extrabold uppercase tracking-widest rounded-sm transition-all"
+              >
+                Add To Bag
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-24">
             <div className="bg-zinc-900 border border-white/10 p-16 rounded-[4rem] flex flex-col items-center gap-12 shadow-2xl">
                 <div className="text-center">
                     <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1 animate-pulse">Global Tunnel Open</p>
@@ -607,7 +704,8 @@ export default function WatchTryOn() {
                     </button>
                 </div>
             </div>
-        </div>
+          </div>
+        )
       )}
 
       {/* MOBILE INLINE CAPTURE VIEW */}
@@ -750,7 +848,60 @@ export default function WatchTryOn() {
 
       {/* RESULTS VIEW */}
       {activeMode === "SYNCED" && (
-        <div className="w-full flex-grow flex flex-col items-center justify-center py-16 px-12">
+        isSdk ? (
+          <div className="w-full h-screen bg-[#f3f3f3] text-zinc-800 flex flex-col justify-between items-center font-sans overflow-hidden">
+            {/* Margined Space at Top */}
+            <div className="w-full h-4" />
+
+            {/* Main Synced 3D Canvas Frame */}
+            <div className="flex-grow flex flex-col items-center justify-center px-6 py-1 w-full">
+              <div className="relative w-full h-full max-w-sm rounded-[2rem] overflow-hidden border bg-zinc-900 border-zinc-200/80 shadow-md"
+                   style={{ maxHeight: 'calc(100vh - 140px)' }}>
+                {/* Hand snapshot fills the entire frame */}
+                {capturedImage && (
+                  <img
+                    src={capturedImage}
+                    alt="Hand snapshot"
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                )}
+                {/* Three.js watch overlay on top */}
+                <canvas ref={threeCanvasRef} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', background: 'transparent' }} />
+                
+                {/* Centered Retake Button with White Background */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
+                     <button 
+                       onClick={() => window.location.reload()} 
+                       className="px-6 py-3 bg-white text-zinc-800 border border-zinc-200/80 hover:bg-zinc-50 text-[9px] font-extrabold uppercase tracking-widest rounded-full shadow-sm active:scale-95 transition-all"
+                     >
+                       Retake
+                     </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Generous Space after Image before the Bottom Bar */}
+            <div className="w-full h-4" />
+
+            {/* Bottom Product Footer Bar */}
+            <div className="w-full bg-white border-t border-zinc-200/80 py-5 px-10 flex items-center justify-between mt-auto">
+              <div className="flex flex-col text-left">
+                <span className="text-[11px] font-extrabold text-zinc-900 tracking-tight font-sans truncate max-w-[200px] md:max-w-xs">{selectedWatch?.name || "Raquel Watch"}</span>
+                <span className="text-[13px] font-black text-zinc-800 mt-1 font-sans">{(selectedWatch as any)?.price || "₹12,495.00"}</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  alert("Watch Added to Cart!");
+                }}
+                className="px-7 py-3.5 bg-[#002d5c] hover:bg-[#001d3d] text-white text-[9px] font-extrabold uppercase tracking-widest rounded-sm transition-all"
+              >
+                Add To Bag
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="w-full flex-grow flex flex-col items-center justify-center py-16 px-12">
             <div className="relative w-full max-w-5xl aspect-[3/4] md:aspect-video rounded-[3rem] overflow-hidden border border-white/10 shadow-3xl bg-zinc-900">
                 <canvas ref={threeCanvasRef} className="w-full h-full object-contain" />
                 
@@ -760,11 +911,12 @@ export default function WatchTryOn() {
                 </div>
 
                 <div className="absolute bottom-12 left-12 flex gap-4">
-                     <button onClick={() => window.location.reload()} className="px-8 py-4 bg-white text-black text-[10px] font-extrabold uppercase tracking-widest rounded-full">Retake</button>
-                     <button onClick={() => setActiveMode("CATALOG")} className="px-8 py-4 bg-white/5 border border-white/10 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-full">Boutique Home</button>
+                     <button onClick={() => window.location.reload()} className="px-8 py-4 bg-white text-black text-[10px] font-extrabold uppercase tracking-widest rounded-full hover:bg-zinc-100 transition-all shadow-md">Retake</button>
+                     <button onClick={() => setActiveMode("CATALOG")} className="px-8 py-4 bg-white/5 border border-white/10 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-full hover:bg-white/10 transition-all">Boutique Home</button>
                 </div>
             </div>
-        </div>
+          </div>
+        )
       )}
 
     </div>

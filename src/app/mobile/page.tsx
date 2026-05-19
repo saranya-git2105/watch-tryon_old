@@ -8,16 +8,18 @@ import { getHandLandmarker, detectHandsFromVideo } from "@/lib/handLandmarker";
 
 function MobileCaptureContent() {
   const searchParams = useSearchParams();
-  const roomId = searchParams.get("id");
+  const roomId = searchParams.get("id") || searchParams.get("room");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<any>(null);
   const loopRef = useRef<number>(0);
+  const hasRequestedCamera = useRef(false);
 
   const [status, setStatus] = useState("Tap to Begin Experience");
   const [captured, setCaptured] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("Disconnected");
   const [steadyProgress, setSteadyProgress] = useState(0);
   const [wristSide, setWristSide] = useState<"LEFT" | "RIGHT">("LEFT");
@@ -126,10 +128,12 @@ function MobileCaptureContent() {
 
   const requestCamera = async () => {
     try {
+      setCameraLoading(true);
       setStatus("Requesting Lens Access...");
       
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setStatus("HTTPS Required for Camera Access");
+        setCameraLoading(false);
         return;
       }
 
@@ -142,6 +146,7 @@ function MobileCaptureContent() {
       });
       
       setCameraActive(true);
+      setCameraLoading(false);
       setStatus("Lens Ready");
       
       setTimeout(() => {
@@ -154,6 +159,7 @@ function MobileCaptureContent() {
       }, 50);
     } catch (err: any) {
       console.error(err);
+      setCameraLoading(false);
       if (err.name === 'NotAllowedError') {
         setStatus("Lens Blocked. Please check browser settings.");
       } else {
@@ -161,6 +167,15 @@ function MobileCaptureContent() {
       }
     }
   };
+
+  // Automatically trigger camera once page is ready and roomId is set
+  useEffect(() => {
+    if (roomId && !hasRequestedCamera.current) {
+      hasRequestedCamera.current = true;
+      console.log("[MobileCapture] Automatically requesting camera stream...");
+      requestCamera();
+    }
+  }, [roomId]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -187,35 +202,34 @@ function MobileCaptureContent() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center bg-zinc-950 text-white p-6 justify-between py-12 selection:bg-emerald-500/20 font-sans">
-      <div className="text-center w-full">
-        <h1 className="text-xl font-black tracking-[0.3em] uppercase italic mb-1">Nexus Sync</h1>
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-[7px] text-emerald-500 font-mono tracking-widest uppercase animate-pulse">{status}</p>
-          <p className="text-[6px] text-zinc-500 font-mono tracking-widest uppercase">{connectionStatus}</p>
-        </div>
-      </div>
+    <div className="flex h-dvh overflow-hidden flex-col items-center bg-zinc-950 text-white selection:bg-emerald-500/20 font-sans">
 
       {!cameraActive && !captured ? (
-        <div className="flex flex-col items-center gap-8 w-full">
-            <div className="w-full max-w-sm aspect-[3/4] rounded-[2.5rem] bg-zinc-900 border border-white/5 flex items-center justify-center p-8 text-center">
-                 <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">Secure Tunnel Established.<br/>Tap Below to Open the Lens.</p>
-            </div>
-            
+        cameraLoading ? (
+          /* Full-screen loading state */
+          <div className="flex-1 w-full flex flex-col items-center justify-center gap-6 px-8">
+            <div className="w-10 h-10 border-2 border-zinc-700 border-t-white rounded-full animate-spin" />
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed text-center">Initializing Lens...<br/>Please allow camera access.</p>
+          </div>
+        ) : (
+          /* Full-screen welcome state */
+          <div className="flex-1 w-full flex flex-col items-center justify-center gap-8 px-6">
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed text-center">Secure Tunnel Established.<br/>Tap Below to Open the Lens.</p>
             <button 
               onClick={requestCamera}
-              className="w-full py-6 rounded-full bg-white text-black font-black uppercase text-[10px] tracking-[0.3em] active:scale-95 transition-all shadow-[0_0_50px_rgba(255,255,255,0.1)]"
+              className="w-full max-w-xs py-6 rounded-full bg-white text-black font-black uppercase text-[10px] tracking-[0.3em] active:scale-95 transition-all"
             >
               Start Boutique Lens
             </button>
-
             <label className="text-[8px] text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-1 cursor-pointer">
               Or Choose from Gallery
               <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
             </label>
-        </div>
+          </div>
+        )
       ) : (
-        <div className="relative w-full max-w-sm aspect-[3/4] overflow-hidden rounded-[2.5rem] border border-white/10 bg-zinc-900 shadow-2xl ring-1 ring-white/10">
+        /* Full-screen camera feed — fills entire viewport */
+        <div className="relative w-full flex-1 overflow-hidden bg-zinc-900">
           <video 
             ref={videoRef} 
             autoPlay 
@@ -262,9 +276,9 @@ function MobileCaptureContent() {
               </svg>
           </div>
 
-          {/* Bottom Control Bar Reconstruction */}
+          {/* Bottom Control Bar */}
           {!captured && (
-              <div className="absolute bottom-6 left-0 right-0 px-6 flex flex-col items-center z-[60] pointer-events-auto">
+              <div className="absolute bottom-0 left-0 right-0 px-6 pb-safe flex flex-col items-center z-[60] pointer-events-auto" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
                   
                   {/* Wrist Selector Pill */}
                   <div className="flex items-center gap-1 bg-black/40 backdrop-blur-md rounded-full p-1 mb-4 border border-white/10 shadow-lg">
@@ -330,7 +344,7 @@ function MobileCaptureContent() {
       )}
 
       {captured && (
-        <div className="flex flex-col gap-4 w-full">
+        <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-3 px-6 z-[70]" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
             <button 
               onClick={() => { setCaptured(false); setStatus("Ready for Re-take"); }}
               className="w-full py-5 rounded-full bg-white/5 border border-white/10 text-white font-bold uppercase text-[9px] tracking-widest hover:bg-white/10 transition-all font-mono"
