@@ -105,6 +105,13 @@ function MobileCaptureContent() {
               const result = await detectHandsFromVideo(videoRef.current, performance.now());
               
               if (result?.landmarks?.length) {
+                  // Auto-detect hand side from MediaPipe handedness classification
+                  if (result.handedness?.length) {
+                    // MediaPipe rear camera: "Left" in result = user's left hand
+                    const detected = result.handedness[0][0]?.categoryName as "Left" | "Right";
+                    if (detected) setWristSide(detected.toUpperCase() as "LEFT" | "RIGHT");
+                  }
+
                   steadyCount++;
                   setSteadyProgress(Math.min(100, (steadyCount / 15) * 100));
                   
@@ -280,24 +287,12 @@ function MobileCaptureContent() {
           {!captured && (
               <div className="absolute bottom-0 left-0 right-0 px-6 pb-safe flex flex-col items-center z-[60] pointer-events-auto" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
                   
-                  {/* Wrist Selector Pill */}
-                  <div className="flex items-center gap-1 bg-black/40 backdrop-blur-md rounded-full p-1 mb-4 border border-white/10 shadow-lg">
-                      <button 
-                        onClick={() => setWristSide("LEFT")}
-                        className={`w-10 h-7 rounded-full flex items-center justify-center transition-all ${wristSide === 'LEFT' ? 'bg-white text-black shadow-sm' : 'text-white/70'}`}
-                      >
-                         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                            <path d="M14.5 4a1.5 1.5 0 00-3 0v4H11V2.5a1.5 1.5 0 00-3 0v6H7.5V4.5a1.5 1.5 0 00-3 0V13c0 3.5 2.5 6 6 6h2c3.5 0 6-2.5 6-6V7a1.5 1.5 0 00-3 0v2h-1V4z" />
-                         </svg>
-                      </button>
-                      <button 
-                        onClick={() => setWristSide("RIGHT")}
-                        className={`w-10 h-7 rounded-full flex items-center justify-center transition-all ${wristSide === 'RIGHT' ? 'bg-white text-black shadow-sm' : 'text-white/70'}`}
-                      >
-                         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" className="-scale-x-100">
-                            <path d="M14.5 4a1.5 1.5 0 00-3 0v4H11V2.5a1.5 1.5 0 00-3 0v6H7.5V4.5a1.5 1.5 0 00-3 0V13c0 3.5 2.5 6 6 6h2c3.5 0 6-2.5 6-6V7a1.5 1.5 0 00-3 0v2h-1V4z" />
-                         </svg>
-                      </button>
+                  {/* Wrist side auto-detected — show indicator */}
+                  <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md rounded-full px-4 py-2 mb-4 border border-white/10 shadow-lg">
+                      <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                      <p className="text-[9px] text-white/80 uppercase tracking-widest font-bold">
+                        {wristSide === "LEFT" ? "Left" : "Right"} Hand Detected
+                      </p>
                   </div>
 
                   <div className="w-full flex items-center justify-between">
