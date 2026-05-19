@@ -8,7 +8,7 @@
 
   // Server URL of the hosted Watch Try-On system
   // Configured to point directly to your active public dev tunnel for live mobile sync
-  const VTO_HOST = 'http://20.197.47.191:3221/sdk/tryon-sdk.js';
+  const VTO_HOST = 'http://20.197.47.191:3221';
 
   // Global styles for the premium CTA button and modal overlay
   const STYLES = `
