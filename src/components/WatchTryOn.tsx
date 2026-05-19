@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { QRCodeSVG } from "qrcode.react";
 import { Peer } from "peerjs";
 import { getHandLandmarker, detectHandsFromVideo } from "@/lib/handLandmarker";
-import { calculateWristPose } from "@/lib/wristPose";
+import { calculateWristPose, computeWatchScale, WRIST_DEPTH_OFFSET } from "@/lib/wristPose";
 import { createThreeScene, disposeThreeScene } from "@/lib/threeScene";
 import { loadWatchModel } from "@/lib/modelLoader";
 
@@ -170,37 +170,30 @@ export default function WatchTryOn() {
       watchTex.needsUpdate = true;
       
       const watchGeom = new THREE.PlaneGeometry(1.0, 1.0); // Catalog images are square
-      const watchMat = new THREE.ShaderMaterial({
-          uniforms: {
-              tDiffuse: { value: watchTex }
-          },
-          vertexShader: `
-              varying vec2 vUv;
-              void main() {
-                  vUv = uv;
-                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-          `,
-          fragmentShader: `
-              uniform sampler2D tDiffuse;
-              varying vec2 vUv;
-              void main() {
-                  vec4 texColor = texture2D(tDiffuse, vUv);
-                  // The JPG background is off-white (not pure #FFF) and textures are evaluated in Linear color space internally
-                  // CHROMA-KEY: DISCARD STUDIO WHITE BACKGROUNDS (JPG compression artifacts usually stay above 0.9)
-                  float maxVal = max(texColor.r, max(texColor.g, texColor.b));
-                  if (maxVal > 0.93) {
-                      discard;
-                  }
-
-                  gl_FragColor = texColor;
-              }
-          `,
+      // MeshBasicMaterial uses Three's color-management pipeline (sRGB in → correct display out).
+      // Custom ShaderMaterial bypassed that and shifted catalog colors on the wrist overlay.
+      const watchMat = new THREE.MeshBasicMaterial({
+          map: watchTex,
           transparent: true,
           side: THREE.DoubleSide,
-          depthWrite: true,
-          depthTest: true // Re-enable depth testing because the position math is finally corrected!
+          depthWrite: false,
+          depthTest: false,
+          toneMapped: false,
       });
+      watchMat.onBeforeCompile = (shader) => {
+          shader.fragmentShader = shader.fragmentShader.replace(
+              "#include <colorspace_fragment>",
+              `
+                  float brightness = (diffuseColor.r + diffuseColor.g + diffuseColor.b) / 3.0;
+                  float maxCh = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b));
+                  float minCh = min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
+                  float saturation = (maxCh > 0.0) ? (maxCh - minCh) / maxCh : 0.0;
+                  if (brightness > 0.88 && saturation < 0.12) discard;
+                  if (diffuseColor.r > 0.92 && diffuseColor.g > 0.92 && diffuseColor.b > 0.92) discard;
+                  #include <colorspace_fragment>
+              `
+          );
+      };
       const watchModel = new THREE.Mesh(watchGeom, watchMat);
 
       const watchGroup = new THREE.Group();
@@ -227,28 +220,7 @@ export default function WatchTryOn() {
       rimLight.position.set(-6, 2, -2);
       threeSetup.scene.add(rimLight);
 
-      // Create high-res contact shadow texture
-      const shadowSize = 256;
-      const shCanvas = document.createElement('canvas');
-      shCanvas.width = shadowSize;
-      shCanvas.height = shadowSize;
-      const shCtx = shCanvas.getContext('2d');
-      if (shCtx) {
-          const grad = shCtx.createRadialGradient(shadowSize/2, shadowSize/2, 0, shadowSize/2, shadowSize/2, shadowSize/2);
-          grad.addColorStop(0, 'rgba(0,0,0,0.52)');
-          grad.addColorStop(0.35, 'rgba(0,0,0,0.22)');
-          grad.addColorStop(1, 'rgba(0,0,0,0)');
-          shCtx.fillStyle = grad;
-          shCtx.fillRect(0, 0, shadowSize, shadowSize);
-      }
-      const shadowTex = new THREE.CanvasTexture(shCanvas);
-      const shadowMesh = new THREE.Mesh(
-          new THREE.PlaneGeometry(1.6, 1.6),
-          new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false })
-      );
-      // Position shadow significantly behind the watch face
-      shadowMesh.position.z = -0.01;
-      watchGroup.add(shadowMesh);
+      // Shadow mesh removed — causes dark halo on transparent canvas overlay
       // --------------------------------------
 
       const landmarker = await getHandLandmarker("IMAGE");
@@ -294,7 +266,7 @@ export default function WatchTryOn() {
           const tx = (pose.watchCenter.x - 0.5) * visibleWidth;
           const ty = -(pose.watchCenter.y - 0.5) * visibleHeight;
           initialTy = ty;
-          const lz = (pose.watchCenter.z || 0) * -1.2;
+          const lz = (pose.watchCenter.z || 0) * -2.0;
 
           let yAxis = new THREE.Vector3(palmTx - wristTx, palmTy - wristTy, 0).normalize();
           let xAxis = new THREE.Vector3(-yAxis.y, yAxis.x, 0).normalize();
@@ -314,25 +286,31 @@ export default function WatchTryOn() {
           const watchVOff = (selectedWatch as any)?.vOffset || 0;
           const watchTilt = (selectedWatch as any)?.tilt || 0;
           
-          const targetWatchScalar = (physicalWristWidth * 0.52) / watchRatio;
+          const targetWatchScalar = computeWatchScale(physicalWristWidth, watchRatio);
 
           // Crown Flip Logic (hand-wards) + Individual Watch Tilt correction
           const zRotation = (side === "RIGHT" ? -Math.PI / 2 : Math.PI / 2) + watchTilt;
           watchModel.rotation.set(0, 0, zRotation);
           watchGroup.scale.x = (side === "RIGHT") ? -1 : 1;
 
-          // POSITIONING: Moving the watch "down" the arm (lower Y-offset)
-          // POSITIONING (User-Refined): Moving significantly towards bottom-left (down-arm)
-          const finalPos = new THREE.Vector3(tx - 0.15, ty - 0.15, lz + 0.02); 
-          initialAIPos.set(tx - 0.15, ty - 0.15); // Store the "Perfect" starting point
+          // Across-wrist (vOffset) + front/back depth along the wrist surface normal
+          const vOffWorld = watchVOff * physicalWristWidth;
+          const depthOffWorld = WRIST_DEPTH_OFFSET * physicalWristWidth;
+
+          const finalPos = new THREE.Vector3(
+            tx + xAxis.x * vOffWorld,
+            ty + xAxis.y * vOffWorld,
+            lz + zAxis.z * depthOffWorld,
+          );
+          initialAIPos.set(finalPos.x, finalPos.y);
           watchGroup.position.copy(finalPos);
           watchGroup.quaternion.copy(targetQuat);
-          watchGroup.scale.setScalar(targetWatchScalar); 
+          watchGroup.scale.setScalar(targetWatchScalar);
 
-          // EXCLUSIVE FIX: Disabling 3D occlusion for 2D plane mode to eliminate "transparent lines"
+          // Disable occlusion proxy — not needed for 2D plane mode
           wristProxyMesh.position.set(0, 0, -20); 
           
-          setStatus("5cm Boutique Guard Active.");
+          setStatus("50mm Wrist Calibration Active.");
         } else {
           showFallback("AI Pose Ambiguity. Tweak Position Manually.");
         }
@@ -639,21 +617,19 @@ export default function WatchTryOn() {
             <div className="flex-grow flex flex-col items-center justify-center px-6 py-2 w-full max-w-md">
               <div className="w-full bg-[#f3f3f3] flex flex-col items-center gap-6">
                 {/* QR Code Graphic Frame */}
-                <div className="p-5 bg-white rounded-[2rem] shadow-sm border border-zinc-100/50 flex flex-col items-center justify-center">
-                  <QRCodeSVG value={mobileUrl} size={180} level="H" />
+                <div className="p-5 bg-white rounded-[2rem] shadow-sm border border-zinc-100/50 flex flex-col items-center justify-center" style={{ minWidth: 290, minHeight: 290 }}>
+                  {mobileUrl ? (
+                    <QRCodeSVG value={mobileUrl} size={260} level="H" />
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-2 border-zinc-200 border-t-zinc-500 rounded-full animate-spin" />
+                      <p className="text-[9px] text-zinc-400 uppercase tracking-widest">Generating...</p>
+                    </div>
+                  )}
                 </div>
 
-                {/* Hand scanning QR outline */}
-                <div className="flex flex-col items-center gap-3 text-center">
-                  <svg viewBox="0 0 64 64" width="44" height="44" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-700">
-                    <rect x="22" y="6" width="20" height="34" rx="3" />
-                    <circle cx="32" cy="35" r="1" />
-                    <line x1="30" y1="9" x2="34" y2="9" />
-                    <path d="M18 42c4-3 6-8 6-8s-1.5-1.5-3-1.5c-2.5 0-5 1.5-5 4s2.5 4 5 4c1.5 0 5-1.5 5-1.5" />
-                    <path d="M26 15h12M26 20h12M26 25h12" strokeDasharray="2 2" />
-                  </svg>
-                  <p className="text-[11px] font-medium tracking-wide text-zinc-800 font-sans">Scan QR with your phone camera to Try On</p>
-                </div>
+                {/* Instruction text */}
+                <p className="text-[11px] font-medium tracking-wide text-zinc-800 font-sans text-center">Scan QR with your phone camera to Try On</p>
 
 
               </div>
@@ -684,8 +660,15 @@ export default function WatchTryOn() {
                     <h2 className="text-3xl font-extrabold italic uppercase tracking-tighter">Scan Any Device</h2>
                 </div>
 
-                <div className="p-8 bg-white rounded-[3rem] shadow-[0_0_100px_rgba(255,255,255,0.05)]">
-                    <QRCodeSVG value={mobileUrl} size={280} level="H" />
+                <div className="p-8 bg-white rounded-[3rem] shadow-[0_0_100px_rgba(255,255,255,0.05)]" style={{ minWidth: 296, minHeight: 296 }}>
+                    {mobileUrl ? (
+                      <QRCodeSVG value={mobileUrl} size={280} level="H" />
+                    ) : (
+                      <div className="w-[280px] h-[280px] flex flex-col items-center justify-center gap-4">
+                        <div className="w-10 h-10 border-2 border-zinc-700 border-t-white rounded-full animate-spin" />
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Generating QR...</p>
+                      </div>
+                    )}
                 </div>
 
                 <div className="flex flex-col items-center gap-6 w-full pt-8 border-t border-white/5">

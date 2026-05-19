@@ -25,6 +25,39 @@ export type WristPose = {
   rotationAngleDeg: number;
 };
 
+/** Index-base to pinky-base span treated as this physical width (mm). */
+export const REFERENCE_WRIST_WIDTH_MM = 50;
+
+/** Default case width when product metadata has no case size (mm). */
+export const DEFAULT_WATCH_CASE_MM = 40;
+
+/**
+ * Nudge from the wrist joint toward the forearm (fraction of index–pinky span).
+ * Higher = closer to the wrist crease / away from the knuckles.
+ */
+export const WRIST_FOREARM_OFFSET = 0.32;
+
+/**
+ * Depth offset along the wrist surface normal (fraction of span).
+ * Positive = toward the camera (sits “on top” of the wrist).
+ */
+export const WRIST_DEPTH_OFFSET = 0.22;
+
+/**
+ * Scale the watch plane so the visible face matches case size on a 50 mm reference wrist.
+ * @param detectedWristSpanWorld - index–pinky span in Three.js world units at the photo plane
+ * @param contentWidthFraction - fraction of the product image that is the watch face
+ * @param watchCaseMm - physical case width in mm (defaults to 40 mm)
+ */
+export function computeWatchScale(
+  detectedWristSpanWorld: number,
+  contentWidthFraction: number,
+  watchCaseMm: number = DEFAULT_WATCH_CASE_MM,
+): number {
+  const faceFractionOfWrist = watchCaseMm / REFERENCE_WRIST_WIDTH_MM;
+  return (detectedWristSpanWorld * faceFractionOfWrist) / contentWidthFraction;
+}
+
 function midpoint(a: Landmark, b: Landmark): Landmark {
   return {
     x: (a.x + b.x) / 2,
@@ -83,13 +116,11 @@ export function calculateWristPose(landmarks: Landmark[]): WristPose | null {
 
   const wristWidth = distance3D(indexBase, pinkyBase);
 
-  // Move from wrist slightly toward forearm so the watch sits on the wrist band area
-  const watchOffset = wristWidth * 0.12;
-
+  // Anchor on the wrist joint, nudged toward the forearm (away from knuckles)
   const watchCenter: Landmark = {
-    x: wrist.x + forearmAxis.x * watchOffset,
-    y: wrist.y + forearmAxis.y * watchOffset,
-    z: wrist.z + forearmAxis.z * watchOffset,
+    x: wrist.x + forearmAxis.x * wristWidth * WRIST_FOREARM_OFFSET,
+    y: wrist.y + forearmAxis.y * wristWidth * WRIST_FOREARM_OFFSET,
+    z: wrist.z + forearmAxis.z * wristWidth * WRIST_FOREARM_OFFSET,
   };
 
   const rotationAngleRad = Math.atan2(wristAxis.y, wristAxis.x);

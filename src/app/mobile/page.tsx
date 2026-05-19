@@ -65,7 +65,10 @@ function MobileCaptureContent() {
     if (!ctx) return;
     
     ctx.drawImage(video, 0, 0);
-    const imageData = canvas.toDataURL("image/jpeg", 0.62); 
+    const imageData = canvas.toDataURL("image/jpeg", 0.62);
+
+    const stream = video.srcObject as MediaStream | null;
+    if (stream) stream.getTracks().forEach((track) => track.stop());
     
     try {
       if (roomId) {
@@ -76,7 +79,7 @@ function MobileCaptureContent() {
         });
       }
       if (connRef.current) connRef.current.send(JSON.stringify({ type: "SYNC", image: imageData, wristSide })); // Keep peer fallback just in case
-      setStatus("BEAMED TO NEXUS.");
+      setStatus("See the snapshot on your PC");
     } catch (e) {
       setStatus("Global Sync Error. Retry.");
       setCaptured(false);
@@ -201,7 +204,7 @@ function MobileCaptureContent() {
             }
             if (connRef.current) connRef.current.send(img);
         } catch(e) {}
-        setStatus("SNAPSHOT BEAMED.");
+        setStatus("See the snapshot on your PC");
         setCaptured(true);
       };
       reader.readAsDataURL(file);
@@ -247,10 +250,28 @@ function MobileCaptureContent() {
           <canvas ref={canvasRef} className="hidden" />
           
           {/* Top Banner - 1916 Style */}
-          <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[85%] bg-black/60 backdrop-blur-md rounded-lg py-2 px-4 border border-white/10 z-50 flex items-center justify-between pointer-events-none">
+          {!captured && (
+            <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[85%] bg-black/60 backdrop-blur-md rounded-lg py-2 px-4 border border-white/10 z-50 flex items-center justify-between pointer-events-none">
               <p className="text-[10px] text-white/90 font-medium">Having trouble? Try Manual <span className="underline ml-1">Turn Auto OFF</span></p>
-          </div>
+            </div>
+          )}
 
+          {captured && (
+            <div className="absolute inset-0 z-[65] flex items-center justify-center px-8 pointer-events-none">
+              <div className="w-full max-w-sm rounded-2xl bg-black/75 backdrop-blur-xl border border-emerald-500/30 px-8 py-10 text-center shadow-2xl">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20">
+                  <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                </div>
+                <p className="text-[10px] uppercase tracking-[0.35em] text-emerald-400 font-bold mb-3">Snapshot sent</p>
+                <p className="text-lg font-semibold text-white leading-snug">See the snapshot on your PC</p>
+                <p className="mt-3 text-[11px] text-white/60 leading-relaxed">Your try-on is ready on the desktop screen.</p>
+              </div>
+            </div>
+          )}
+
+          {!captured && (
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden z-40">
               {/* Hand Outline PNG Overlay */}
               <img 
@@ -282,6 +303,7 @@ function MobileCaptureContent() {
                   />
               </svg>
           </div>
+          )}
 
           {/* Bottom Control Bar */}
           {!captured && (
@@ -341,12 +363,11 @@ function MobileCaptureContent() {
       {captured && (
         <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-3 px-6 z-[70]" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
             <button 
-              onClick={() => { setCaptured(false); setStatus("Ready for Re-take"); }}
+              onClick={() => { setCaptured(false); setStatus("Ready for Re-take"); requestCamera(); }}
               className="w-full py-5 rounded-full bg-white/5 border border-white/10 text-white font-bold uppercase text-[9px] tracking-widest hover:bg-white/10 transition-all font-mono"
             >
               Retake Snapshot
             </button>
-            <p className="text-center text-[6px] text-emerald-500 uppercase tracking-widest">Image received on computer.</p>
         </div>
       )}
     </div>

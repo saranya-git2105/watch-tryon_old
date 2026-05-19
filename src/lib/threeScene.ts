@@ -28,6 +28,8 @@ export function createThreeScene(
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(width, height, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Product images are display-referred; avoid ACES tone mapping shifting catalog colors
+  renderer.toneMapping = THREE.NoToneMapping;
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
   scene.add(ambientLight);
